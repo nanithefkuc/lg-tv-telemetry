@@ -137,10 +137,11 @@ domains, and the Google ad network (`doubleclick.net`, `googlesyndication.com`).
 
 Unexplained behavior worth stating plainly: a TV with no smart-home devices
 queries Hue discovery, and maintains MQTT sessions to AWS IoT — neither has
-a user-facing function here. And over one week the TV issued **~7,700
+user-facing function here. And over one week the TV issued **~7,700
 reverse-DNS queries systematically enumerating every address of its local
 /24** (`*.2.168.192.in-addr.arpa`) — LAN mapping via PTR lookups, the DNS
-equivalent of a port sweep.
+equivalent of a port sweep. Countermeasure: the relay's resolver now answers
+every reverse lookup with NXDOMAIN.
 
 ## How to block it
 

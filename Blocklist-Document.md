@@ -187,6 +187,7 @@ may cause repeated privacy-dialog prompts if blocked) and
 |---|---|---|
 | `tcp dport 8883` drop (TV) | kills AWS-IoT MQTT regardless of destination IP | any TV smart-home/IoT feature |
 | ICMP echo → `192.168.0.0/16` drop | TV cannot ping-scan the LAN | none known (webOS uses HTTP checks) |
+| ALL `in-addr.arpa` → NXDOMAIN | kills the TV's systematic /24 reverse-DNS mapping (~7,700 PTR/week) — no legit reverse-DNS need on a TV-only resolver |
 | all `:53` → DNAT to relay dnsmasq | forced DNS: closes hardcoded-8.8.8.8 side channel (verified intercepting) | if a device needs a specific external resolver |
 | masquerade `oifname wlan0` | NAT — load-bearing, do not touch | everything |
 
@@ -254,5 +255,8 @@ cat /var/lib/tvsniff/daily-blocked.log   # daily 23:59 evidence snapshots (auto)
   unexplained trio + 7 Minerva-pattern one-shots. Also documented: the TV
   performed ~7,700 PTR queries across the week systematically enumerating
   its local /24 (LAN mapping via reverse DNS). Open questions: `fbcdn.net`
-  and `hardwarezone.com.sg` SNI from the TV (operator browsing?), Amagi
-  playouts for CGTN via LG Channels.
+  and `hardwarezone.com.sg` SNI from the TV — resolved as user behavior
+  (the operator is not the TV's main user), not telemetry. Amagi playouts
+  for CGTN via LG Channels remain content-delivery, not telemetry.
+
+- **2026-09-22 (PTR sinkhole)** — `local=/in-addr.arpa/`: every reverse lookup now answers NXDOMAIN (verified). fbcdn/hardwarezone SNI resolved as user behavior.
