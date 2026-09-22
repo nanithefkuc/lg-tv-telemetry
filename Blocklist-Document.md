@@ -136,13 +136,11 @@ Evidence column: `SNI` = hostname observed on the wire by tvsniff (fact).
 | `34.212.185.237`, `44.242.131.93`, `44.228.67.58`, `52.33.247.19`, `44.226.179.188` | `logs.netflix.com` / `nrdp.logs.*` hosts — TV kept hitting them by cached IP after DNS block |
 | `52.37.176.140`, `44.239.254.161`, `50.112.122.241` | nameless `nrdp`-cloud (us-west-2) — blocked on suspicion, weakest entries in the list |
 
-### Nameless AWS EC2 (us-west-2) — no SNI, data-farm pattern
-`35.165.63.51`, `54.189.185.191`, `35.163.192.149`, `54.213.101.195`, `52.24.26.117`, `52.10.248.239`, `35.82.23.172`, `52.10.208.126`, `35.82.63.100`, `54.189.176.25`
-
 ### One-offs
 | IP | Role |
 |---|---|
-| `173.233.81.175` | hardcoded "static site" on :4433 — **161+ connection attempts, still unidentified. Top sleuthing priority.** |
+| `173.233.81.175` | hardcoded collector on :4433 — **CONFIRMED Alphonso**: `tkacr425.alphonso.tv` CNAME→`krishnaw374.alphonso.tv` A→this IP; live TLS cert `O=Alphonso Inc., CN=*.alphonso.tv`; Turnkey Internet AS420244, Albany NY |
+| `67.231.244.222` | `prov-lb` / `prov-geo-aws.alphonso.tv` — live Alphonso provisioning LB (found during attribution verification) |
 | `34.117.13.189` | `discovery.meethue.com` (Google Cloud LB) — Hue probe, blocked |
 | `95.216.195.133` | Hetzner, HTTP-only, first-boot era, never seen again |
 
@@ -227,3 +225,10 @@ cat /var/lib/tvsniff/daily-blocked.log   # daily 23:59 evidence snapshots (auto)
 - **2026-09-15 (night)** — Alphonso ACR confirmed on the wire (`tkacr425`/`bl-server`/`prov-lg.alphonso.tv` + LG CDP beacons on `lgtvcommon.com`). Blocked: `alphonso.tv`, `lgacfde.com`, `lgtvcommon.com`, `lgtvsdp.com`, `lgtvdp.com`, `lgecloudapm.com`, `lgthinqhome.com`, partner ad batch (`castoola.tv`, `cjpowercast.com`, `thetake.com`, `smartclip.net/.com`, `yumenetworks.com`, `lgsmartweb.com`, `lggalleryplus.com`, `ad.lgappstv.com`, `lgrecommends.lgappstv.com`, `tvsdp.lgeapi.com`, `nevoai-iothub-53-prod.azure-devices.net`), review-flagged `sibbo.net` + `nuancemobility.net`. `173.233.81.175` re-attributed: probable Alphonso collector (DNS history), now fronted by Linode JP / `hershestory.com`.
 
 - **2026-09-22** — daily evidence pipeline: `tvblocked-daily.timer` appends a full `tvblocked` snapshot to `/var/lib/tvsniff/daily-blocked.log` at 23:59 daily (`Persistent=true`, catches up if the Pi was off). Since `flows.jsonl` logrotates daily, each snapshot covers exactly that day — day-over-day deltas are per-day totals. Week-one observation: `nextlgsdp.com` alone reaches 13k–27k lookups/day.
+
+- **2026-09-22 (night 2)** — `173.233.81.175` **confirmed as Alphonso**: forward
+  DNS (`krishnaw374.alphonso.tv` A record), CNAME chain from the TV's own
+  `tkacr425.alphonso.tv` collector, and a live TLS certificate
+  `O=Alphonso Inc., CN=*.alphonso.tv`. Added `67.231.244.222`
+  (`prov-lb`/`prov-geo-aws.alphonso.tv`). Generic hoster rDNS
+  (`static.as420244.net`) explains why most RDNS tools showed no Alphonso link.

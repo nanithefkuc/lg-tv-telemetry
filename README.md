@@ -95,6 +95,17 @@ being watched*:
 | `bl-server.alphonso.tv` | beacon/log server |
 | `prov-lg.alphonso.tv` | LG-specific provisioning |
 
+`tkacr425.alphonso.tv` is a CNAME to `krishnaw374.alphonso.tv`, which holds
+the A record `173.233.81.175` — the hardcoded IP the TV hammered on port
+4433. That IP's TLS service presents a valid certificate
+`CN=*.alphonso.tv, O=Alphonso Inc.` (verified live), closing the attribution:
+**the hardcoded collector is Alphonso's**, hosted at Turnkey Internet
+(AS420244, Albany, NY, US). Other live Alphonso infrastructure found during
+verification: `prov-lb` / `prov-geo-aws.alphonso.tv` → `67.231.244.222`.
+Certificate Transparency also shows an active `*.alphonso.tv` wildcard plus
+endpoints such as `flog.alphonso.tv` (logging) and
+`tvos-voice-gateway.alphonso.tv` (voice).
+
 LG's own CDP beacons (`lgtvcommon.com`) run alongside it. In the TV's own
 settings, turning off Live Plus and withdrawing the "Viewing Information"
 agreement are the in-device controls; network blocking enforces them.
@@ -112,7 +123,7 @@ agreement are the in-device controls; network blocking enforces them.
 
 | Indicator | Observation | Assessment |
 |---|---|---|
-| `173.233.81.175:4433` | hardcoded IP, no SNI, 200+ connection attempts in a 90-minute window, non-standard port | historical DNS ties it to an Alphonso domain via a US AS; today it reverse-resolves to a Japanese Linode host (`hershestory.com`) — infrastructure rotation or reassignment. **Probable ex-Alphonso collector.** |
+| ~~`173.233.81.175:4433`~~ | **since confirmed — see the ACR section above**: `tkacr425.alphonso.tv` CNAMEs to `krishnaw374.alphonso.tv` which holds this A record; its TLS service presents `O=Alphonso Inc., CN=*.alphonso.tv` (verified live) | **confirmed Alphonso collector** (Turnkey Internet, AS420244, Albany NY) |
 | `44.207.185.112`, `52.205.51.211`, `35.173.7.10`, `44.208.157.219` (AWS us-east-2) | TLS SNI is a raw SHA-hash + UUID, nothing else | anonymous telemetry collectors; owner unknown |
 | 10× nameless AWS us-west-2 EC2 (`35.165.63.51`, `54.189.185.191`, `35.163.192.149`, `54.213.101.195`, `52.24.26.117`, `52.10.248.239`, `35.82.23.172`, `52.10.208.126`, `35.82.63.100`, `54.189.176.25`) | no SNI, one-shot bursts | unattributed; blocked on pattern (bare EC2 = rented data pipeline) |
 | `95.216.195.133` (Hetzner) | plain HTTP, first-boot window only, never again | provisioning/config beacon |
