@@ -126,7 +126,6 @@ agreement are the in-device controls; network blocking enforces them.
 | ~~`173.233.81.175:4433`~~ | **since confirmed — see the ACR section above**: `tkacr425.alphonso.tv` CNAMEs to `krishnaw374.alphonso.tv` which holds this A record; its TLS service presents `O=Alphonso Inc., CN=*.alphonso.tv` (verified live) | **confirmed Alphonso collector** (Turnkey Internet, AS420244, Albany NY) |
 | `44.207.185.112`, `52.205.51.211`, `35.173.7.10`, `44.208.157.219` (AWS us-east-2) | TLS SNI is a raw SHA-hash + UUID, nothing else | anonymous telemetry collectors; owner unknown |
 | 10× nameless AWS us-west-2 EC2 (`35.165.63.51`, `54.189.185.191`, `35.163.192.149`, `54.213.101.195`, `52.24.26.117`, `52.10.248.239`, `35.82.23.172`, `52.10.208.126`, `35.82.63.100`, `54.189.176.25`) | no SNI, one-shot bursts | unattributed; blocked on pattern (bare EC2 = rented data pipeline) |
-| ~~`95.216.195.133`~~ | **retracted**: `redirect.archlinux.org` (forward-verified) — the sighting window was the operator's own Arch Linux test machine during bring-up, not the TV; zero hits in the TV's persistent log. Block removed. | not TV traffic |
 | `discovery.meethue.com` → `34.117.13.189` | TV probed Philips Hue discovery **with zero Hue devices present** | benign-looking service, unexplained probing; blocked |
 
 Unexplained behavior worth stating plainly: a TV with no smart-home devices

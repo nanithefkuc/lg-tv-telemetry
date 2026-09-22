@@ -142,7 +142,6 @@ Evidence column: `SNI` = hostname observed on the wire by tvsniff (fact).
 | `173.233.81.175` | hardcoded collector on :4433 — **CONFIRMED Alphonso**: `tkacr425.alphonso.tv` CNAME→`krishnaw374.alphonso.tv` A→this IP; live TLS cert `O=Alphonso Inc., CN=*.alphonso.tv`; Turnkey Internet AS420244, Albany NY |
 | `67.231.244.222` | `prov-lb` / `prov-geo-aws.alphonso.tv` — live Alphonso provisioning LB (found during attribution verification) |
 | `34.117.13.189` | `discovery.meethue.com` (Google Cloud LB) — Hue probe, blocked |
-| ~~`95.216.195.133`~~ | **RETRACTED 2026-09-22**: `redirect.archlinux.org` (verified by forward DNS) — traffic came from the operator's own Arch Linux test machine during the relay bring-up session, not the TV. Zero hits in the TV's persistent log. Block removed. |
 
 ### Alphonso ACR — wire-confirmed 2026-09-15
 
