@@ -142,6 +142,10 @@ Evidence column: `SNI` = hostname observed on the wire by tvsniff (fact).
 | `173.233.81.175` | hardcoded collector on :4433 — **CONFIRMED Alphonso**: `tkacr425.alphonso.tv` CNAME→`krishnaw374.alphonso.tv` A→this IP; live TLS cert `O=Alphonso Inc., CN=*.alphonso.tv`; Turnkey Internet AS420244, Albany NY |
 | `67.231.244.222` | `prov-lb` / `prov-geo-aws.alphonso.tv` — live Alphonso provisioning LB (found during attribution verification) |
 | `34.117.13.189` | `discovery.meethue.com` (Google Cloud LB) — Hue probe, blocked |
+| `119.56.2.28` | M1 Ltd (SG telco, RDAP-verified) — recurring plain-HTTP, unexplained; blocked |
+| `40.115.251.148` | Microsoft Azure (RDAP-verified) — recurring plain-HTTP, unexplained; blocked |
+| `44.234.6.167` | AWS us-west-2 — recurring :80+:443 all week, no SNI; blocked |
+| `44.240.6.158`, `18.217.59.9`, `13.59.33.82`, `18.216.0.185`, `3.143.114.234`, `54.187.226.31`, `52.41.112.18` | one-shot AWS (sep 20–21), Minerva-pattern; blocked |
 
 ### Alphonso ACR — wire-confirmed 2026-09-15
 
@@ -239,3 +243,16 @@ cat /var/lib/tvsniff/daily-blocked.log   # daily 23:59 evidence snapshots (auto)
   the IP or any archlinux name. Lesson recorded: entries sourced from the
   pre-reboot (volatile) log must be treated as unconfirmed unless re-observed
   from the TV after the persistent-logging cutover.
+
+- **2026-09-22 (week-2 sweep)** — full 7-day log sweep. DNS blocks added:
+  `ueiwsp.com` (57 hits, nonsense name, community LG list),
+  `userpaneltv-pa.googleapis.com` (Google TV user-panel),
+  `minerva.devices.a2z.com` + `global.telemetry.insights.video.a2z.com`
+  (Amazon telemetry — this **identifies the former "hash-SNI" collectors**
+  as Amazon's Minerva device-telemetry platform), `doubleclick.net`,
+  `googlesyndication.com` (Google ads). IPs added: M1/Azure/AWS recurring
+  unexplained trio + 7 Minerva-pattern one-shots. Also documented: the TV
+  performed ~7,700 PTR queries across the week systematically enumerating
+  its local /24 (LAN mapping via reverse DNS). Open questions: `fbcdn.net`
+  and `hardwarezone.com.sg` SNI from the TV (operator browsing?), Amagi
+  playouts for CGTN via LG Channels.

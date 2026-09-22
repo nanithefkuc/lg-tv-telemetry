@@ -119,18 +119,28 @@ agreement are the in-device controls; network blocking enforces them.
 `nevoai-iothub-53-prod.azure-devices.net`, `sibbo.net` (consent sync),
 `nuancemobility.net` (voice input stack).
 
+Week-2 sweep additions: `ueiwsp.com` (nonsense-named Cloudflare domain, 57
+hits, also present in community LG lists), `userpaneltv-pa.googleapis.com`
+(Google TV user-panel measurement), Amazon Minerva + video-insights telemetry
+domains, and the Google ad network (`doubleclick.net`, `googlesyndication.com`).
+
 ## Suspicious, but not provable
 
 | Indicator | Observation | Assessment |
 |---|---|---|
-| ~~`173.233.81.175:4433`~~ | **since confirmed — see the ACR section above**: `tkacr425.alphonso.tv` CNAMEs to `krishnaw374.alphonso.tv` which holds this A record; its TLS service presents `O=Alphonso Inc., CN=*.alphonso.tv` (verified live) | **confirmed Alphonso collector** (Turnkey Internet, AS420244, Albany NY) |
-| `44.207.185.112`, `52.205.51.211`, `35.173.7.10`, `44.208.157.219` (AWS us-east-2) | TLS SNI is a raw SHA-hash + UUID, nothing else | anonymous telemetry collectors; owner unknown |
+| `44.207.185.112`, `52.205.51.211`, `35.173.7.10`, `44.208.157.219` (AWS us-east-2) + 7 later one-shots | SNI turned out to be `<device-hash>.us-east-1.prod.service.minerva.devices.a2z.com` | **identified: Amazon "Minerva" device-telemetry platform**; domain now sinkholed, IPs blocked |
 | 10× nameless AWS us-west-2 EC2 (`35.165.63.51`, `54.189.185.191`, `35.163.192.149`, `54.213.101.195`, `52.24.26.117`, `52.10.248.239`, `35.82.23.172`, `52.10.208.126`, `35.82.63.100`, `54.189.176.25`) | no SNI, one-shot bursts | unattributed; blocked on pattern (bare EC2 = rented data pipeline) |
 | `discovery.meethue.com` → `34.117.13.189` | TV probed Philips Hue discovery **with zero Hue devices present** | benign-looking service, unexplained probing; blocked |
+| `119.56.2.28` (M1 Ltd, SG telco — RDAP-verified) | recurring plain-HTTP across multiple days | unexplained; a TV has no business with an ISP-side host; blocked |
+| `40.115.251.148` (Microsoft Azure — RDAP-verified) | recurring plain-HTTP across multiple days | unexplained; blocked |
+| `44.234.6.167` (AWS us-west-2) | recurring :80 + :443 all week, no SNI | unattributed; blocked |
 
 Unexplained behavior worth stating plainly: a TV with no smart-home devices
 queries Hue discovery, and maintains MQTT sessions to AWS IoT — neither has
-a user-facing function here.
+a user-facing function here. And over one week the TV issued **~7,700
+reverse-DNS queries systematically enumerating every address of its local
+/24** (`*.2.168.192.in-addr.arpa`) — LAN mapping via PTR lookups, the DNS
+equivalent of a port sweep.
 
 ## How to block it
 
