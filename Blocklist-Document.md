@@ -142,7 +142,7 @@ Evidence column: `SNI` = hostname observed on the wire by tvsniff (fact).
 | `173.233.81.175` | hardcoded collector on :4433 — **CONFIRMED Alphonso**: `tkacr425.alphonso.tv` CNAME→`krishnaw374.alphonso.tv` A→this IP; live TLS cert `O=Alphonso Inc., CN=*.alphonso.tv`; Turnkey Internet AS420244, Albany NY |
 | `67.231.244.222` | `prov-lb` / `prov-geo-aws.alphonso.tv` — live Alphonso provisioning LB (found during attribution verification) |
 | `34.117.13.189` | `discovery.meethue.com` (Google Cloud LB) — Hue probe, blocked |
-| `95.216.195.133` | Hetzner, HTTP-only, first-boot era, never seen again |
+| ~~`95.216.195.133`~~ | **RETRACTED 2026-09-22**: `redirect.archlinux.org` (verified by forward DNS) — traffic came from the operator's own Arch Linux test machine during the relay bring-up session, not the TV. Zero hits in the TV's persistent log. Block removed. |
 
 ### Alphonso ACR — wire-confirmed 2026-09-15
 
@@ -232,3 +232,11 @@ cat /var/lib/tvsniff/daily-blocked.log   # daily 23:59 evidence snapshots (auto)
   `O=Alphonso Inc., CN=*.alphonso.tv`. Added `67.231.244.222`
   (`prov-lb`/`prov-geo-aws.alphonso.tv`). Generic hoster rDNS
   (`static.as420244.net`) explains why most RDNS tools showed no Alphonso link.
+
+- **2026-09-22 (retraction)** — `95.216.195.133` un-blocked and re-attributed:
+  it is `redirect.archlinux.org` (Hetzner). The single sighting window coincided
+  with the operator's own test machine session (which also curled
+  `archlinux.org` minutes later); the TV's post-restart log has zero hits for
+  the IP or any archlinux name. Lesson recorded: entries sourced from the
+  pre-reboot (volatile) log must be treated as unconfirmed unless re-observed
+  from the TV after the persistent-logging cutover.
