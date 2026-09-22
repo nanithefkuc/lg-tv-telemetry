@@ -1,0 +1,404 @@
+#!/usr/bin/env python3
+"""tvsniff -- endpoint logger for the TV relay.
+
+Watches the relay's LAN interface (the TV side) with an AF_PACKET socket and
+logs, as JSON lines, every endpoint the device behind it talks to:
+
+  {"type":"conn"}   new TCP/UDP flow (dst ip/port, whether the SYN was seen)
+  {"type":"sni"}    TLS server name from a ClientHello on that flow
+  {"type":"dns_q"}  DNS questions asked by the device
+  {"type":"dns_a"}  DNS answers (owner name -> address)
+  {"type":"end"}    flow ended (RST / FIN both ways / idle): pkts, bytes, dur
+
+Payloads are parsed in memory only to extract SNI/DNS names; nothing beyond
+hostnames, addresses and ports is ever written to the log.
+
+Limitations: IPv4 only; QUIC (UDP/443) endpoints are logged but their SNI is
+encrypted and therefore not extracted.
+"""
+import argparse
+import fcntl
+import json
+import os
+import signal
+import socket
+import struct
+import sys
+import time
+
+ETH_P_IP = 0x0800
+SIOCGIFFLAGS = 0x8913
+SIOCSIFFLAGS = 0x8914
+IFF_PROMISC = 0x100
+SWEEP_EVERY = 30.0
+
+TCP_FIN, TCP_SYN, TCP_RST, TCP_ACK = 0x01, 0x02, 0x04, 0x10
+
+
+def parse_cidr(s):
+    net, _, bits = s.partition("/")
+    bits = int(bits) if bits else 32
+    n = struct.unpack("!I", socket.inet_aton(net))[0]
+    mask = (0xFFFFFFFF << (32 - bits)) & 0xFFFFFFFF if bits else 0
+    return n & mask, mask
+
+
+def parse_sni(buf):
+    """Best-effort server_name from the first TLS ClientHello in buf.
+
+    Returns the hostname, or None when absent/incomplete/malformed.
+    """
+    if len(buf) < 5 or buf[0] != 0x16:  # not a handshake record
+        return None
+    rec_len = int.from_bytes(buf[3:5], "big")
+    body = buf[5:5 + rec_len]
+    if len(body) < 4 + 2 + 32 + 1 + 2 + 1 + 2 or body[0] != 0x01:  # ClientHello
+        return None
+    try:
+        p = 4
+        p += 2 + 32                      # client_version + random
+        sid_len = body[p]
+        p += 1 + sid_len                 # session_id
+        cs_len = int.from_bytes(body[p:p + 2], "big")
+        p += 2 + cs_len                  # cipher_suites
+        cm_len = body[p]
+        p += 1 + cm_len                  # compression_methods
+        ext_len = int.from_bytes(body[p:p + 2], "big")
+        p += 2
+        end = min(p + ext_len, len(body))
+        while p + 4 <= end:
+            etype = int.from_bytes(body[p:p + 2], "big")
+            elen = int.from_bytes(body[p + 2:p + 4], "big")
+            p += 4
+            if p + elen > len(body):
+                break
+            if etype == 0x0000:          # server_name
+                q, stop = p, p + elen
+                if q + 2 > stop:
+                    break
+                q += 2                   # server_name_list length (unused)
+                while q + 3 <= stop:
+                    ntype = body[q]
+                    nlen = int.from_bytes(body[q + 1:q + 3], "big")
+                    q += 3
+                    if ntype == 0 and q + nlen <= stop:  # host_name
+                        return body[q:q + nlen].decode(
+                            "ascii", "replace").lower().rstrip(".")
+                    q += nlen
+            p += elen
+    except IndexError:
+        return None
+    return None
+
+
+def dns_read_name(msg, off):
+    """Decode a (possibly compressed) DNS name.
+
+    Returns (name, offset_after_name_in_original_position) or (None, None).
+    """
+    labels, end, hops = [], None, 0
+    while True:
+        if off >= len(msg) or hops > 32:
+            return None, None
+        length = msg[off]
+        if length == 0:
+            off += 1
+            break
+        if length & 0xC0 == 0xC0:        # compression pointer
+            if off + 1 >= len(msg):
+                return None, None
+            if end is None:
+                end = off + 2
+            off = ((length & 0x3F) << 8) | msg[off + 1]
+            hops += 1
+            continue
+        if length > 63 or off + 1 + length > len(msg):
+            return None, None
+        labels.append(msg[off + 1:off + 1 + length])
+        off += 1 + length
+    name = b".".join(labels).decode("ascii", "replace").lower()
+    return (name or "."), (end if end is not None else off)
+
+
+def parse_dns(msg):
+    """Return {"questions": [names], "answers": [(owner_name, ipv4)]}."""
+    out = {"questions": [], "answers": []}
+    if len(msg) < 12:
+        return out
+    _qid, flags, qd, an, _ns, _ar = struct.unpack_from("!HHHHHH", msg, 0)
+    p = 12
+    for _ in range(min(qd, 8)):
+        name, p2 = dns_read_name(msg, p)
+        if name is None or p2 + 4 > len(msg):
+            return out
+        out["questions"].append(name)
+        p = p2 + 4
+    if not flags & 0x8000:               # query, not response
+        return out
+    for _ in range(min(an, 64)):
+        name, p2 = dns_read_name(msg, p)
+        if name is None or p2 + 10 > len(msg):
+            break
+        rtype, _rclass, _ttl, rdlen = struct.unpack_from("!HHIH", msg, p2)
+        p = p2 + 10
+        if p + rdlen > len(msg):
+            break
+        if rtype == 1 and rdlen == 4:    # A record
+            out["answers"].append((name, socket.inet_ntoa(msg[p:p + 4])))
+        p += rdlen
+    return out
+
+
+class Flow:
+    __slots__ = ("src", "sport", "dst", "dport", "dir", "syn", "start", "last",
+                 "pkts", "bytes", "sni_done", "buf", "fin_out", "fin_in")
+
+    def __init__(self, src, sport, dst, dport, direction, syn):
+        self.src, self.sport, self.dst, self.dport = src, sport, dst, dport
+        self.dir, self.syn = direction, syn
+        self.start = self.last = time.monotonic()
+        self.pkts = self.bytes = 0
+        self.sni_done = False
+        self.buf = b""
+        self.fin_out = self.fin_in = False
+
+
+class Sniffer:
+    def __init__(self, iface, lan, out, sni_ports, idle, sni_max):
+        self.iface = iface
+        self.net, self.mask = parse_cidr(lan)
+        self.out = out
+        self.sni_ports = sni_ports
+        self.idle = idle
+        self.sni_max = sni_max
+        self.flows = {}
+        self.running = False
+        self.sock = None
+
+    # -- event output ----------------------------------------------------
+    def _emit(self, **ev):
+        ev["ts"] = round(time.time(), 3)
+        self.out.write(json.dumps(ev, separators=(",", ":")) + "\n")
+        self.out.flush()
+
+    # -- helpers ---------------------------------------------------------
+    def _lan_ip(self, ip_int):
+        return (ip_int & self.mask) == self.net
+
+    @staticmethod
+    def _key(proto, a_ip, a_port, b_ip, b_port):
+        if (a_ip, a_port) > (b_ip, b_port):
+            a_ip, a_port, b_ip, b_port = b_ip, b_port, a_ip, a_port
+        return (a_ip, a_port, b_ip, b_port, proto)
+
+    def _end(self, key, fl, reason):
+        self._emit(type="end", reason=reason, proto="tcp" if key[4] == 6 else "udp",
+                   src=fl.src, sport=fl.sport, dst=fl.dst, dport=fl.dport,
+                   pkts=fl.pkts, bytes=fl.bytes,
+                   dur=round(fl.last - fl.start, 3))
+        self.flows.pop(key, None)
+
+    def sweep(self, now):
+        for key, fl in list(self.flows.items()):
+            if now - fl.last > self.idle:
+                self._end(key, fl, "idle")
+
+    # -- packet path -----------------------------------------------------
+    def handle_frame(self, frame):
+        if len(frame) < 14:
+            return
+        etype = struct.unpack_from("!H", frame, 12)[0]
+        off = 14
+        while etype in (0x8100, 0x88A8):  # VLAN tags
+            if len(frame) < off + 4:
+                return
+            etype = struct.unpack_from("!H", frame, off + 2)[0]
+            off += 4
+        if etype != ETH_P_IP:
+            return
+        self._ipv4(frame[off:])
+
+    def _ipv4(self, data):
+        if len(data) < 20 or data[0] >> 4 != 4:
+            return
+        ihl = (data[0] & 0x0F) * 4
+        if ihl < 20 or len(data) < ihl:
+            return
+        if struct.unpack_from("!H", data, 6)[0] & 0x1FFF:  # non-first fragment
+            return
+        total_len = struct.unpack_from("!H", data, 2)[0]
+        proto = data[9]
+        s_int, d_int = struct.unpack_from("!II", data, 12)
+        if s_int == 0 or d_int == 0 or d_int >> 28 >= 14:  # null / mcast / bcast
+            return
+        src = socket.inet_ntoa(data[12:16])
+        dst = socket.inet_ntoa(data[16:20])
+        end = min(total_len, len(data)) if total_len >= ihl else len(data)
+        l4 = data[ihl:end]
+        if proto == 6:
+            self._tcp(src, s_int, dst, d_int, l4, end)
+        elif proto == 17:
+            self._udp(src, s_int, dst, l4, end)
+
+    def _tcp(self, src, s_int, dst, d_int, l4, nbytes):
+        if len(l4) < 20:
+            return
+        sport, dport = struct.unpack_from("!HH", l4, 0)
+        doff = (l4[12] >> 4) * 4
+        flags = l4[13]
+        payload = l4[doff:] if 20 <= doff <= len(l4) else b""
+        key = self._key(6, src, sport, dst, dport)
+        fl = self.flows.get(key)
+        if fl is None:
+            if self._lan_ip(s_int):
+                direction = "out"
+            elif self._lan_ip(d_int):
+                direction = "in"
+            else:
+                direction = "oth"
+            fl = Flow(src, sport, dst, dport, direction,
+                      bool(flags & TCP_SYN and not flags & TCP_ACK))
+            self.flows[key] = fl
+            self._emit(type="conn", dir=direction, proto="tcp", src=src,
+                       sport=sport, dst=dst, dport=dport, syn=fl.syn)
+        fl.pkts += 1
+        fl.bytes += nbytes
+        fl.last = time.monotonic()
+        if not fl.sni_done and dport in self.sni_ports and payload:
+            fl.buf += payload
+            if len(fl.buf) > self.sni_max:
+                fl.sni_done = True
+            else:
+                name = parse_sni(fl.buf)
+                if name:
+                    fl.sni_done = True
+                    self._emit(type="sni", src=src, dst=dst, dport=dport,
+                               name=name)
+        if flags & TCP_RST:
+            self._end(key, fl, "rst")
+        elif flags & TCP_FIN:
+            if (src, sport) == (fl.src, fl.sport):
+                fl.fin_out = True
+            else:
+                fl.fin_in = True
+            if fl.fin_out and fl.fin_in:
+                self._end(key, fl, "fin")
+
+    def _udp(self, src, s_int, dst, l4, nbytes):
+        if len(l4) < 8:
+            return
+        sport, dport = struct.unpack_from("!HH", l4, 0)
+        payload = l4[8:]
+        key = self._key(17, src, sport, dst, dport)
+        fl = self.flows.get(key)
+        if fl is None:
+            direction = "out" if self._lan_ip(s_int) else (
+                "in" if self._lan_ip(
+                    struct.unpack("!I", socket.inet_aton(dst))[0]) else "oth")
+            fl = Flow(src, sport, dst, dport, direction, False)
+            self.flows[key] = fl
+            self._emit(type="conn", dir=direction, proto="udp", src=src,
+                       sport=sport, dst=dst, dport=dport, syn=False)
+        fl.pkts += 1
+        fl.bytes += nbytes
+        fl.last = time.monotonic()
+        if dport == 53:
+            d = parse_dns(payload)
+            if d["questions"]:
+                self._emit(type="dns_q", src=src, dst=dst, names=d["questions"])
+        elif sport == 53:
+            d = parse_dns(payload)
+            if d["answers"]:
+                self._emit(type="dns_a", src=dst,
+                           q=d["questions"][0] if d["questions"] else "",
+                           answers=[[n, ip] for n, ip in d["answers"]])
+
+    # -- socket lifecycle -------------------------------------------------
+    def _promisc(self, on):
+        ifreq = struct.pack("16sh", self.iface.encode()[:15], 0)
+        flags = struct.unpack("16sh", fcntl.ioctl(
+            self.sock.fileno(), SIOCGIFFLAGS, ifreq))[1]
+        flags = flags | IFF_PROMISC if on else flags & ~IFF_PROMISC
+        fcntl.ioctl(self.sock.fileno(), SIOCSIFFLAGS,
+                    struct.pack("16sh", self.iface.encode()[:15], flags))
+
+    def run(self):
+        self.sock = socket.socket(socket.AF_PACKET, socket.SOCK_RAW,
+                                  socket.htons(ETH_P_IP))
+        self.sock.bind((self.iface, 0))
+        self._promisc(True)
+        self.sock.settimeout(1.0)
+        self.running = True
+        bits = bin(self.mask).count("1")
+        self._emit(type="start", iface=self.iface, pid=os.getpid(),
+                   lan="%s/%d" % (socket.inet_ntoa(
+                       struct.pack("!I", self.net)), bits))
+        last_sweep = time.monotonic()
+        try:
+            while self.running:
+                try:
+                    frame = self.sock.recv(65535)
+                except socket.timeout:
+                    frame = None
+                if frame is not None:
+                    self.handle_frame(frame)
+                now = time.monotonic()
+                if now - last_sweep >= SWEEP_EVERY:
+                    self.sweep(now)
+                    last_sweep = now
+        finally:
+            self._promisc(False)
+            self.sock.close()
+            self._emit(type="stop", reason="signal" if not self.running else "error")
+
+
+    def stop(self, *_a):
+        self.running = False
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(description=__doc__.strip().splitlines()[0])
+    ap.add_argument("--iface", required=True, help="LAN interface to watch")
+    ap.add_argument("--lan", required=True,
+                    help="relay-side subnet in CIDR form, e.g. 192.168.2.0/24")
+    ap.add_argument("--log", help="JSONL output file (append)")
+    ap.add_argument("--stdout", action="store_true", help="also print events")
+    ap.add_argument("--idle", type=float, default=300.0,
+                    help="idle seconds before a flow is expired (default 300)")
+    ap.add_argument("--sni-ports", default="443,8443",
+                    help="TCP ports to scan for TLS ClientHello SNI")
+    ap.add_argument("--sni-max", type=int, default=16384,
+                    help="max bytes buffered per flow for SNI extraction")
+    args = ap.parse_args(argv)
+
+    outs = []
+    if args.stdout:
+        outs.append(sys.stdout)
+    if args.log:
+        os.makedirs(os.path.dirname(args.log) or ".", exist_ok=True)
+        outs.append(open(args.log, "a", buffering=1))
+    if not outs:
+        ap.error("need --log and/or --stdout")
+
+    class _Tee:
+        def __init__(self, streams):
+            self.streams = streams
+
+        def write(self, s):
+            for st in self.streams:
+                st.write(s)
+
+        def flush(self):
+            for st in self.streams:
+                st.flush()
+
+    sn = Sniffer(args.iface, args.lan, _Tee(outs),
+                 {int(p) for p in args.sni_ports.split(",") if p.strip()},
+                 args.idle, args.sni_max)
+    signal.signal(signal.SIGTERM, sn.stop)
+    signal.signal(signal.SIGINT, sn.stop)
+    sn.run()
+
+
+if __name__ == "__main__":
+    main()

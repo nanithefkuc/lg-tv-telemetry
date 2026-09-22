@@ -1,0 +1,8 @@
+#!/bin/sh
+# Append a dated tvblocked snapshot to the persistent evidence log.
+LOG=/var/lib/tvsniff/daily-blocked.log
+{
+    echo
+    echo "===== SNAPSHOT $(date '+%Y-%m-%d %H:%M') ====="
+    /usr/local/bin/tvblocked
+} >> "$LOG"

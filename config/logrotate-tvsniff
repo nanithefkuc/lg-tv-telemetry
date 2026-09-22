@@ -1,0 +1,8 @@
+/var/lib/tvsniff/flows.jsonl {
+    daily
+    rotate 14
+    compress
+    missingok
+    notifempty
+    copytruncate
+}

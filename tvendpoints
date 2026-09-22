@@ -1,0 +1,134 @@
+#!/usr/bin/env python3
+"""tvendpoints -- who is the TV talking to?
+
+Summarizes tvsniff's JSONL log into a per-endpoint table: destination
+ip:port, protocol, flow count, traffic volume, and the hostnames learned
+from TLS SNI and DNS answers seen on the wire.
+"""
+import argparse
+import json
+import sys
+import time
+from collections import defaultdict
+
+
+def parse_dur(s):
+    mult = {"s": 1, "m": 60, "h": 3600, "d": 86400}
+    if s and s[-1].lower() in mult:
+        return int(s[:-1]) * mult[s[-1].lower()]
+    return int(s)
+
+
+def ip_category(ip):
+    o = [int(x) for x in ip.split(".")]
+    if o[0] == 127:
+        return "loopback"
+    if o[0] in (0, 10):
+        return "private"
+    if o[0] == 172 and 16 <= o[1] <= 31:
+        return "private"
+    if o[0] == 192 and o[1] == 168:
+        return "private"
+    if 224 <= o[0] <= 239:
+        return "multicast"
+    if o[0] == 255:
+        return "broadcast"
+    return "internet"
+
+
+def human(n):
+    for unit in ("B", "K", "M", "G", "T"):
+        if n < 1000:
+            return "%.0f%s" % (n, unit) if unit == "B" else "%.1f%s" % (n, unit)
+        n /= 1000.0
+    return "%.1fP" % n
+
+
+def fmt_time(ts):
+    return time.strftime("%H:%M:%S", time.localtime(ts))
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(description="Summarize tvsniff JSONL logs")
+    ap.add_argument("files", nargs="*", default=["/var/lib/tvsniff/flows.jsonl"])
+    ap.add_argument("--since", help="only events newer than this (e.g. 30m, 2h, 1d)")
+    ap.add_argument("--limit", type=int, default=40, help="rows to show (0 = all)")
+    ap.add_argument("--all", action="store_true",
+                    help="include private/multicast endpoints, not just internet")
+    args = ap.parse_args(argv)
+
+    cutoff = time.time() - parse_dur(args.since) if args.since else 0.0
+
+    names_by_ip = defaultdict(set)
+    ep = {}  # (dst, dport, proto) -> record
+    srcs = defaultdict(set)
+    total_flows = 0
+
+    for path in args.files:
+        try:
+            fh = open(path, encoding="utf-8", errors="replace")
+        except OSError as e:
+            print("skipping %s: %s" % (path, e), file=sys.stderr)
+            continue
+        for line in fh:
+            try:
+                ev = json.loads(line)
+            except ValueError:
+                continue
+            t = ev.get("ts", 0)
+            if t < cutoff:
+                continue
+            et = ev.get("type")
+            if et == "conn":
+                k = (ev["dst"], ev["dport"], ev["proto"])
+                r = ep.setdefault(k, {"flows": 0, "first": t, "last": t,
+                                      "bytes": 0, "names": set()})
+                r["flows"] += 1
+                r["first"] = min(r["first"], t)
+                r["last"] = max(r["last"], t)
+                srcs[ev["dst"]].add(ev["src"])
+                total_flows += 1
+            elif et == "sni":
+                k = (ev["dst"], ev.get("dport", 443), "tcp")
+                r = ep.setdefault(k, {"flows": 0, "first": t, "last": t,
+                                      "bytes": 0, "names": set()})
+                r["names"].add(ev["name"])
+            elif et == "dns_a":
+                for name, ip in ev.get("answers", []):
+                    names_by_ip[ip].add(name)
+            elif et == "end":
+                k = (ev["dst"], ev["dport"], ev["proto"])
+                r = ep.get(k)
+                if r:
+                    r["bytes"] += ev.get("bytes", 0)
+                    r["last"] = max(r["last"], t)
+
+    rows = []
+    for (dst, dport, proto), r in ep.items():
+        cat = ip_category(dst)
+        if not args.all and cat not in ("internet", "private"):
+            continue
+        names = r["names"] | names_by_ip.get(dst, set())
+        rows.append((r["last"], dst, dport, proto, cat, r["flows"],
+                     r["bytes"], names))
+    rows.sort(reverse=True)
+    if args.limit:
+        rows = rows[: args.limit]
+
+    devices = sorted({s for v in srcs.values() for s in v})
+    print("endpoints: %d  flows: %d  devices: %s" %
+          (len(rows), total_flows, ", ".join(devices) or "-"))
+    print("%-10s %-16s %-6s %-5s %-10s %5s %7s  %s" %
+          ("LAST", "DESTINATION", "PORT", "PROTO", "CATEGORY", "FL", "BYTES",
+           "NAMES (SNI / DNS)"))
+    for last, dst, dport, proto, cat, flows, nbytes, names in rows:
+        nlist = sorted(names)
+        shown = ", ".join(nlist[:3]) + (" (+%d)" % (len(nlist) - 3)
+                                        if len(nlist) > 3 else "")
+        print("%-10s %-16s %-6d %-5s %-10s %5d %7s  %s" %
+              (fmt_time(last), dst, dport, proto, cat, flows,
+               human(nbytes) if nbytes else "-", shown or "-"))
+
+
+if __name__ == "__main__":
+    main()

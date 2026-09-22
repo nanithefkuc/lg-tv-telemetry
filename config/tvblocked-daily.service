@@ -1,0 +1,6 @@
+[Unit]
+Description=Daily tvblocked evidence snapshot (23:59)
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/tvblocked-snapshot
