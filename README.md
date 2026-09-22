@@ -156,11 +156,20 @@ ip saddr @tvlan udp dport 53 counter dnat to 192.168.2.1
 ip daddr @blocked_v4 counter drop
 ip saddr @tvlan tcp dport 8883 counter drop
 ip saddr @tvlan ip daddr 192.168.0.0/16 icmp type echo-request counter drop
+ip saddr @tvlan tcp dport 853 counter drop   # DoT
+ip saddr @tvlan udp dport 853 counter drop   # DoQ
+ip saddr @tvlan udp dport 443 counter drop   # QUIC + DoH-over-HTTP/3
 ```
 
 Keeping the TV functional: firmware OTA (`snu.lge.com`, `su-ssl.lge.com`),
 the app store (`ibs.lgappstv.com`), streaming CDNs, and shared
 CloudFront/Akamai/Cloudflare IPs are deliberately left open.
+
+Encrypted DNS is additionally sealed two layers deep: 18 DoH endpoint domains
+(Google, Cloudflare, Quad9, OpenDNS, AdGuard, NextDNS, …) are sinkholed, and
+23 public-resolver anycast IPs (8.8.8.8, 1.1.1.1, 9.9.9.9, …) are blackholed —
+so even hardcoded-IP DoH cannot escape. Port-53 traffic to those IPs is
+unaffected (it is DNAT'd to the relay's dnsmasq first, where sinkholes apply).
 
 ## Results
 
@@ -172,8 +181,11 @@ CloudFront/Akamai/Cloudflare IPs are deliberately left open.
 
 ## Known gaps
 
-- QUIC/DoH (UDP 443) remains open; blocking it forces TCP/TLS where SNI is
-  visible, at some streaming-performance cost.
+- ~~QUIC/DoH (UDP 443) remains open~~ **Closed 2026-09-22**: UDP 443, TCP/UDP 853
+  dropped; DoH endpoints sinkholed + resolver IPs blackholed. Wire evidence
+  before the change: zero DoT/DoQ flows ever, zero DoH-name lookups, and only
+  ~50 QUIC flows/week (YouTube edges) — so observed collateral is nil. Clients
+  fall back to TCP/TLS where SNI is visible to the logger.
 - Telemetry on shared CDN IPs cannot be blocked without collateral.
 - Apps can use cached IPs after a DNS sinkhole; seal with IP entries when
   observed.

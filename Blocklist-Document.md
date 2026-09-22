@@ -221,6 +221,26 @@ grep dns_q /var/lib/tvsniff/flows.jsonl | tail   # what the TV is resolving
 cat /var/lib/tvsniff/daily-blocked.log   # daily 23:59 evidence snapshots (auto)
 ```
 
+## Encrypted-DNS countermeasures (2026-09-22)
+
+DoH endpoint domains sinkholed (18): dns.google, dns.googleapis.com,
+cloudflare-dns.com, quad9.net, opendns.com, adguard-dns.com, dns.adguard.com,
+nextdns.io, dns.sb, cleanbrowsing.org, dns.cmrg.net, dns.yandex.com,
+common.dot.dns.yandex.ru, alidns.com, doh.pub, dot.pub,
+freedns.controld.com, doh.mullvad.net.
+
+Public-resolver anycast IPs blackholed (23): 8.8.8.8/8.8.4.4, 1.1.1.1/1.0.0.1,
+9.9.9.9/149.112.112.112, 94.140.14.14/15.15, 208.67.222.222/220.220,
+185.228.168.9/169.9, 8.26.56.26, 8.20.247.20, 77.88.8.8/77.88.1.1,
+185.222.222.222/185.184.222.222, 223.5.5.5/223.6.6.6, 119.29.29.29,
+193.138.218.74. Port-53 to these IPs is unaffected (DNAT'd first).
+
+Wire evidence before deployment: 0 flows on :853 (any proto), 0 DNS lookups
+of any DoH endpoint name, 0 non-53 connections to resolver IPs, ~50 UDP/443
+flows in 8 days (all Google/YouTube edges). Verified post-deploy from a
+netns client in the TV segment: UDP/443 drop counter +5, TCP/853 timeout,
+TCP 443/80 to YouTube/Amazon/example.com all connect.
+
 ## Changelog
 
 - **2026-09-15** — initial: `lgsmartad.com`, `customerevents/beacon.netflix.com`, `wiselg.com`, IPs `173.233.81.175` + `34.117.13.189`, MQTT :8883, LAN ICMP guard, forced DNS.
@@ -260,3 +280,5 @@ cat /var/lib/tvsniff/daily-blocked.log   # daily 23:59 evidence snapshots (auto)
   for CGTN via LG Channels remain content-delivery, not telemetry.
 
 - **2026-09-22 (PTR sinkhole)** — `local=/in-addr.arpa/`: every reverse lookup now answers NXDOMAIN (verified). fbcdn/hardwarezone SNI resolved as user behavior.
+
+- **2026-09-22 (encrypted DNS + QUIC)** — sinkholed 18 DoH endpoint domains, blackholed 23 resolver anycast IPs, dropped TCP/UDP 853 (DoT/DoQ) and UDP 443 (QUIC/DoH-H3). Revert: delete the DoH `address=` lines / remove IPs from `blocked_v4` / delete the three `dport 853|443` rules, then `nft -f /etc/nftables.conf`. nft gotcha hit and documented: standalone comment lines inside `elements = { }` are a syntax error — keep comments trailing on element lines.
